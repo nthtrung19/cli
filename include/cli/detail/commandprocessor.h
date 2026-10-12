@@ -123,10 +123,38 @@ private:
             case Symbol::tab:
             {
                 auto line = terminal.GetLine();
-                auto completions = session.GetCompletions(line);
+                // mcs patch: each completion is "<line>[<CompletionHelpSeparator><description>]";
+                // complete with the lines, list the last words with their descriptions.
+                // "<line><CompletionHintMarker><text>" is a hint: shown only when there
+                // is nothing to complete, and never inserted into the line.
+                std::vector<std::string> completions;
+                std::vector<std::string> descriptions;
+                std::vector<std::string> hints;
+                for (const auto& c : session.GetCompletions(line))
+                {
+                    const auto hint = c.find(CompletionHintMarker);
+                    if (hint != std::string::npos)
+                    {
+                        hints.push_back(c.substr(hint + 1));
+                        continue;
+                    }
+                    const auto sep = c.find(CompletionHelpSeparator);
+                    completions.push_back(c.substr(0, sep));
+                    descriptions.push_back(sep == std::string::npos ? std::string() : c.substr(sep + 1));
+                }
 
                 if (completions.empty())
+                {
+                    if (hints.empty())
+                        break;
+                    session.OutStream() << '\n';
+                    for (const auto& h : hints)
+                        session.OutStream() << "  " << h << '\n';
+                    session.Prompt();
+                    terminal.ResetCursor();
+                    terminal.SetLine( line );
                     break;
+                }
                 if (completions.size() == 1)
                 {
                     terminal.SetLine(completions[0]+' ');
@@ -140,9 +168,24 @@ private:
                     break;
                 }
                 session.OutStream() << '\n';
+                // mcs patch: one per line, only the word being completed ("noop",
+                // not "fsw ds noop"), followed by its description in an aligned column.
+                std::vector<std::string> words;
+                std::size_t width = 0;
+                for (const auto& c : completions)
+                {
+                    words.push_back(c.substr(c.find_last_of(' ') + 1));
+                    width = std::max(width, words.back().size());
+                }
                 std::string items;
-                std::for_each( completions.begin(), completions.end(), [&items](auto& cmd){ items += '\t' + cmd; } );
-                session.OutStream() << items << '\n';
+                for (std::size_t i = 0; i < words.size(); ++i)
+                {
+                    items += "  " + words[i];
+                    if (!descriptions[i].empty())
+                        items += std::string(width - words[i].size() + 3, ' ') + descriptions[i];
+                    items += '\n';
+                }
+                session.OutStream() << items;
                 session.Prompt();
                 terminal.ResetCursor();
                 terminal.SetLine( line );

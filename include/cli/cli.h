@@ -177,6 +177,15 @@ namespace cli
         }
 
         /**
+         * @brief Replace the output of the built-in "help" command. The handler receives the
+         * arguments typed after "help". (Local patch to the vendored library.)
+         */
+        void HelpHandler(const std::function< void(std::ostream&, const std::vector<std::string>&) >& handler)
+        {
+            helpHandler = handler;
+        }
+
+        /**
          * @brief Get a global out stream object that can be used to print on every session currently connected (local and remote)
          * 
          * @return OutStream& the reference to the global out stream writing on every session console. 
@@ -242,9 +251,17 @@ namespace cli
         std::function<void(std::ostream&)> exitAction;
         std::function<void(std::ostream&, const std::string& cmd, const std::exception& )> exceptionHandler;
         std::function<void(std::ostream&, const std::string& cmd)> wrongCmdHandler;
+        std::function<void(std::ostream&, const std::vector<std::string>& args)> helpHandler;
     };
 
     // ********************************************************************
+
+    // mcs patch: separates a completion line from the description of the
+    // command it completes (see Command::GetCompletionRecursive).
+    constexpr char CompletionHelpSeparator = '\x1f';
+    // mcs patch: "<line><CompletionHintMarker><text>" is a hint (e.g. what an
+    // argument expects): listed, but never inserted into the command line.
+    constexpr char CompletionHintMarker = '\x1e';
 
     class Command
     {
@@ -262,14 +279,22 @@ namespace cli
         virtual void Disable() { enabled = false; }
         virtual bool Exec(const std::vector<std::string>& cmdLine, CliSession& session) = 0;
         virtual void Help(std::ostream& out) const = 0;
+        // mcs patch: one-line description shown next to the command in the
+        // tab-completion list.
+        virtual std::string Description() const { return {}; }
         // Returns the collection of completions relatives to this command.
         // For simple commands, provides a base implementation that use the name of the command
         // for aggregate commands (i.e., Menu), the function is redefined to give the menu command
         // and the subcommand recursively
+        // mcs patch: each completion may end with CompletionHelpSeparator + description.
         virtual std::vector<std::string> GetCompletionRecursive(const std::string& line) const
         {
             if (!enabled) return {};
-            if (name.rfind(line, 0) == 0) return {name}; // name starts_with line
+            if (name.rfind(line, 0) == 0) // name starts_with line
+            {
+                const auto desc = Description();
+                return {desc.empty() ? name : name + CompletionHelpSeparator + desc};
+            }
             return {};
         }
     protected:
@@ -462,6 +487,8 @@ namespace cli
             cmds(std::make_shared<Cmds>())
         {}
 
+        std::string Description() const override { return description; } // mcs patch
+
         template <typename R, typename ... Args>
         CmdHandler Insert(const std::string& cmdName, R (*f)(std::ostream&, Args...), const std::string& help, const std::vector<std::string>& parDesc={});
         
@@ -619,7 +646,9 @@ namespace cli
                 for (const auto& c: cs)
                     result.push_back(prefix + ' ' + c); // concat submenu with command
             }
-            if (parent != nullptr)
+            // mcs patch: parent completions only serve ".." navigation; offering them
+            // for any remainder lists the parent's own name ("fsw ds fsw").
+            if (parent != nullptr && rest.rfind(ParentShortcut(), 0) == 0)
             {
                 auto cs = parent->GetCompletionWithParent(rest);
                 for (const auto& c: cs)
@@ -774,6 +803,8 @@ namespace cli
         {
         }
 
+        std::string Description() const override { return description; } // mcs patch
+
         bool Exec(const std::vector< std::string >& cmdLine, CliSession& session) override
         {
             if (!IsEnabled()) return false;
@@ -832,6 +863,8 @@ namespace cli
         {
         }
 
+        std::string Description() const override { return description; } // mcs patch
+
         bool Exec(const std::vector< std::string >& cmdLine, CliSession& session) override
         {
             if (!IsEnabled()) return false;
@@ -889,7 +922,11 @@ namespace cli
             coutPtr->Register(out);
             globalScopeMenu->Insert(
                 "help",
-                [this](std::ostream&){ Help(); },
+                [this](std::ostream&, const std::vector<std::string>& args)
+                {
+                    if (cli.helpHandler) cli.helpHandler(out, args);
+                    else Help();
+                },
                 "This help message"
             );
             globalScopeMenu->Insert(
