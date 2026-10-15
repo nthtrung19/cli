@@ -112,6 +112,14 @@ namespace cli
     class Menu;
     class CliSession;
 
+    // One line of "help": what to type and what it does. Handed to a custom
+    // help handler (Cli::HelpHandler) so it can lay the list out itself.
+    struct HelpEntry
+    {
+        std::string usage;        // "verbose <on|off>"
+        std::string description;  // "Show or set hexdump of every sent packet"
+    };
+
     class Cli
     {
 
@@ -178,9 +186,13 @@ namespace cli
 
         /**
          * @brief Replace the output of the built-in "help" command. The handler receives the
-         * arguments typed after "help". (Local patch to the vendored library.)
+         * arguments typed after "help" and the commands available in the current menu
+         * (global commands first), in the order the default help lists them.
+         * (Local patch to the vendored library.)
          */
-        void HelpHandler(const std::function< void(std::ostream&, const std::vector<std::string>&) >& handler)
+        using HelpHandlerFunction = std::function< void(std::ostream&, const std::vector<std::string>& args,
+                                                        const std::vector<HelpEntry>& entries) >;
+        void HelpHandler(const HelpHandlerFunction& handler)
         {
             helpHandler = handler;
         }
@@ -251,7 +263,7 @@ namespace cli
         std::function<void(std::ostream&)> exitAction;
         std::function<void(std::ostream&, const std::string& cmd, const std::exception& )> exceptionHandler;
         std::function<void(std::ostream&, const std::string& cmd)> wrongCmdHandler;
-        std::function<void(std::ostream&, const std::vector<std::string>& args)> helpHandler;
+        HelpHandlerFunction helpHandler;
     };
 
     // ********************************************************************
@@ -275,8 +287,13 @@ namespace cli
         Command& operator=(const Command&) = delete;
         Command& operator=(Command&&) = delete;
 
+        // What to type, for the help list: the name, then each parameter as
+        // "<description>" (Local patch to the vendored library.)
+        virtual std::string Usage() const { return name; }
+
         virtual void Enable() { enabled = true; }
         virtual void Disable() { enabled = false; }
+        bool IsEnabled() const { return enabled; }
         virtual bool Exec(const std::vector<std::string>& cmdLine, CliSession& session) = 0;
         virtual void Help(std::ostream& out) const = 0;
         // mcs patch: one-line description shown next to the command in the
@@ -299,7 +316,6 @@ namespace cli
         }
     protected:
         const std::string& Name() const { return name; }
-        bool IsEnabled() const { return enabled; }
     private:
         const std::string name;
         bool enabled;
@@ -401,6 +417,9 @@ namespace cli
         }
 
         std::vector<std::string> GetCompletions(std::string currentLine) const;
+
+        // The commands "help" lists here: global ones, then the current menu's.
+        std::vector<HelpEntry> HelpEntries() const;
 
     private:
 
@@ -547,6 +566,17 @@ namespace cli
         std::string Prompt() const
         {
             return prompt;
+        }
+
+        // The entries MainHelp prints, as data: every enabled command, then the parent menu.
+        void HelpEntries(std::vector<HelpEntry>& entries) const
+        {
+            if (!IsEnabled()) return;
+            for (const auto& cmd: *cmds)
+                if (cmd->IsEnabled())
+                    entries.push_back({cmd->Usage(), cmd->Description()});
+            if (parent != nullptr)
+                entries.push_back({parent->Usage(), parent->Description()});
         }
 
         void MainHelp(std::ostream& out)
@@ -826,6 +856,14 @@ namespace cli
             return false;
         }
 
+        std::string Usage() const override // mcs patch
+        {
+            std::string u = Name();
+            for (const auto& s: parameterDesc)
+                u += " <" + s + '>';
+            return u;
+        }
+
         void Help(std::ostream& out) const override
         {
             if (!IsEnabled()) return;
@@ -876,6 +914,14 @@ namespace cli
             }
             return false;
         }
+        std::string Usage() const override // mcs patch
+        {
+            std::string u = Name();
+            for (const auto& s: parameterDesc)
+                u += " <" + s + '>';
+            return u;
+        }
+
         void Help(std::ostream& out) const override
         {
             if (!IsEnabled()) return;
@@ -924,7 +970,7 @@ namespace cli
                 "help",
                 [this](std::ostream&, const std::vector<std::string>& args)
                 {
-                    if (cli.helpHandler) cli.helpHandler(out, args);
+                    if (cli.helpHandler) cli.helpHandler(out, args, HelpEntries());
                     else Help();
                 },
                 "This help message"
@@ -985,6 +1031,14 @@ namespace cli
             << afterPrompt
             << "> "
             << std::flush;
+    }
+
+    inline std::vector<HelpEntry> CliSession::HelpEntries() const
+    {
+        std::vector<HelpEntry> entries;
+        globalScopeMenu->HelpEntries(entries);
+        current->HelpEntries(entries);
+        return entries;
     }
 
     inline void CliSession::Help() const
