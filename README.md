@@ -177,7 +177,8 @@ This indicates you're in the root menu.
 - **Command execution:**
     - **Current menu:** Enter the name of a command available in the current menu to execute it.
     - **Submenu (full path):** Specify the complete path (separated by spaces) to a command within a submenu to execute it.
-    - **History execution:** Use `!` followed by the identifier of a history item to execute that command again.
+
+(This fork has no `!` history execution: use the up/down arrows to recall a previous command.)
 
 ### Autocompletion
 
