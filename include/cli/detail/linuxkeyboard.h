@@ -101,7 +101,6 @@ private:
 
 //
 
-
 class LinuxKeyboard : public InputDevice
 {
 public:
@@ -110,7 +109,7 @@ public:
         enabled(false),
         servant( [this]() noexcept { Read(); } )
     {
-        ActivateInput();
+        ActivateInputImpl();
     }
     ~LinuxKeyboard() override
     {
@@ -120,10 +119,7 @@ public:
     }
     void ActivateInput() override
     {
-        ToManualMode();
-        std::lock_guard<std::mutex> lock(mtx);
-        enabled = true;
-        cv.notify_one();
+        ActivateInputImpl();
     }
     void DeactivateInput() override
     {
@@ -131,8 +127,17 @@ public:
         std::lock_guard<std::mutex> lock(mtx);
         enabled = false;
     }
+    
+    private:
 
-private:
+    // we need a private non virtual method to call from the constructor
+    void ActivateInputImpl()
+    {
+        ToManualMode();
+        std::lock_guard<std::mutex> lock(mtx);
+        enabled = true;
+        cv.notify_one();
+    }
 
     void Read() noexcept
     {
@@ -229,13 +234,14 @@ private:
     termios oldt;
     termios newt;
     InputSource is;
-    std::thread servant;
     std::mutex mtx;
     std::condition_variable cv;
+    std::thread servant;
 };
 
 } // namespace detail
 } // namespace cli
 
 #endif // CLI_DETAIL_LINUXKEYBOARD_H_
+
 
