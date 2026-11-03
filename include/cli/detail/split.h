@@ -101,8 +101,10 @@ private:
             state = State::escape;
             splitResult.emplace_back("");
         }
-        else if (c == '!')
+        else if (c == '!' && splitResult.empty())
         {
+            // "!" at the start of the line is a word of its own ("! cmd", "!cmd");
+            // elsewhere it is an ordinary character ("x != 0").
             splitResult.emplace_back(1, c);
         }
         else
@@ -116,11 +118,6 @@ private:
     {
         if (c == ' ' || c == '\t' || c == '\n')
         {
-            state = State::space;
-        }
-        else if (c == '!')
-        {
-            splitResult.emplace_back(1, c);
             state = State::space;
         }
         else if (c == '"' || c == '\'')
